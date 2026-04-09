@@ -13,12 +13,20 @@ export interface WorkflowInputs {
 
 export async function runWorkflow(
   inputs: WorkflowInputs,
-  onProgress: (step: number, log: string) => void
+  onProgress: (step: number, log: string) => void,
+  signal?: AbortSignal
 ) {
   const { summary, notes, guidance, template, language } = inputs;
   const langSuffix = language === 'zh' ? 'Please respond in Traditional Chinese.' : 'Please respond in English.';
 
+  const checkAbort = () => {
+    if (signal?.aborted) {
+      throw new Error("Workflow stopped by user.");
+    }
+  };
+
   // Step 1: Web Search Summary
+  checkAbort();
   onProgress(1, "Agent #1: Searching web for FDA guidance and predicate device history...");
   const step1Response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -31,6 +39,7 @@ export async function runWorkflow(
   const webSearchSummary = step1Response.text || "";
 
   // Step 2: Comprehensive 510(k) Summary
+  checkAbort();
   onProgress(2, "Agent #2: Synthesizing internal data and web search results...");
   const step2Response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -40,6 +49,7 @@ export async function runWorkflow(
   const comprehensiveSummary = step2Response.text || "";
 
   // Step 3: Dataset Generation
+  checkAbort();
   onProgress(3, "Agent #3: Extracting structured dataset (50 entities)...");
   const step3Response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -71,13 +81,17 @@ export async function runWorkflow(
   
   let dataset: Entity[] = [];
   try {
-    const parsed = JSON.parse(step3Response.text || "{}");
+    const text = step3Response.text || "{}";
+    const cleanJson = text.replace(/```json|```/g, "").trim();
+    const parsed = JSON.parse(cleanJson);
     dataset = parsed.entities || [];
   } catch (e) {
     console.error("Failed to parse dataset JSON", e);
+    // Fallback or partial data could be handled here
   }
 
   // Step 4: Review Report
+  checkAbort();
   onProgress(4, "Agent #4: Generating formal 510(k) review report...");
   const step4Response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -93,10 +107,16 @@ export async function runWorkflow(
   });
   const reviewReport = step4Response.text || "";
 
-  // Extract follow-up questions from the report (simple heuristic)
-  const followUpQuestions = reviewReport.split(/20 Follow-up Questions|後續審查追蹤問題/i)[1]?.split('\n').filter(l => l.match(/^\d+\./)).map(l => l.trim()) || [];
+  // Extract follow-up questions from the report (more robust regex)
+  const followUpSection = reviewReport.split(/20 Follow-up Questions|後續審查追蹤問題/i)[1] || "";
+  const followUpQuestions = followUpSection
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l.match(/^\d+[\.\)]/))
+    .map(l => l.replace(/^\d+[\.\)]\s*/, ""));
 
   // Step 5: Skill Creator
+  checkAbort();
   onProgress(5, "Agent #5: Creating persistent skill.md for future reviews...");
   const step5Response = await ai.models.generateContent({
     model: "gemini-3-flash-preview",
@@ -109,6 +129,7 @@ export async function runWorkflow(
   });
   const skillMd = step5Response.text || "";
 
+  checkAbort();
   onProgress(0, "Workflow complete.");
 
   return {

@@ -100,14 +100,26 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'submission' | 'dataset' | 'results'>('dashboard');
   const [logs, setLogs] = useState<string[]>(["System initialized. Ready for submission."]);
   const [localEntities, setLocalEntities] = useState<Entity[]>([]);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const t = DICT[state.language];
+
+  const handleStopAgent = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      setLogs(prev => [...prev, "Workflow stopped by user."]);
+      setState(prev => ({ ...prev, isProcessing: false, agentStep: 0 }));
+    }
+  };
 
   const handleStartAgent = async () => {
     if (!state.submissionSummary) {
       alert("Please provide a submission summary.");
       return;
     }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     setState(prev => ({ ...prev, isProcessing: true, agentStep: 1 }));
     setLogs(prev => [...prev, "Initiating multi-agent workflow..."]);
@@ -122,15 +134,21 @@ export default function App() {
       }, (step, log) => {
         setState(prev => ({ ...prev, agentStep: step as any }));
         setLogs(prev => [...prev, log]);
-      });
+      }, controller.signal);
 
       setState(prev => ({ ...prev, results, isProcessing: false, agentStep: 0 }));
       setLocalEntities(results.dataset || []);
       setActiveTab('results');
-    } catch (error) {
-      console.error(error);
-      setLogs(prev => [...prev, "ERROR: Workflow failed. Check console for details."]);
+    } catch (error: any) {
+      if (error.message === "Workflow stopped by user.") {
+        console.log("Workflow aborted");
+      } else {
+        console.error(error);
+        setLogs(prev => [...prev, "ERROR: Workflow failed. Check console for details."]);
+      }
       setState(prev => ({ ...prev, isProcessing: false, agentStep: 0 }));
+    } finally {
+      abortControllerRef.current = null;
     }
   };
 
@@ -262,14 +280,25 @@ export default function App() {
             <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2">{t.title}</h1>
             <p className="text-white/60">FDA 510(k) Regulatory Intelligence & Compliance Engine</p>
           </div>
-          <button 
-            onClick={handleStartAgent}
-            disabled={state.isProcessing}
-            className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/10 rounded-2xl font-bold flex items-center gap-3 shadow-xl shadow-emerald-500/20 transition-all active:scale-95"
-          >
-            {state.isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
-            {state.isProcessing ? t.processing : t.startAgent}
-          </button>
+          <div className="flex gap-3">
+            {state.isProcessing && (
+              <button 
+                onClick={handleStopAgent}
+                className="px-6 py-4 bg-rose-500 hover:bg-rose-400 rounded-2xl font-bold flex items-center gap-3 shadow-xl shadow-rose-500/20 transition-all active:scale-95"
+              >
+                <div className="w-3 h-3 bg-white rounded-sm" />
+                Stop
+              </button>
+            )}
+            <button 
+              onClick={handleStartAgent}
+              disabled={state.isProcessing}
+              className="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/10 rounded-2xl font-bold flex items-center gap-3 shadow-xl shadow-emerald-500/20 transition-all active:scale-95"
+            >
+              {state.isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
+              {state.isProcessing ? t.processing : t.startAgent}
+            </button>
+          </div>
         </header>
 
         <AnimatePresence mode="wait">
@@ -583,6 +612,16 @@ ${state.results.skillMd}
 
               <div className="p-4 rounded-xl bg-black/40 border border-white/5 font-mono text-xs text-emerald-400/80">
                 {logs[logs.length - 1]}
+              </div>
+
+              <div className="flex justify-center pt-4">
+                <button 
+                  onClick={handleStopAgent}
+                  className="px-8 py-3 bg-rose-500/20 hover:bg-rose-500/30 text-rose-400 border border-rose-500/30 rounded-xl font-bold flex items-center gap-3 transition-all active:scale-95"
+                >
+                  <div className="w-3 h-3 bg-rose-400 rounded-sm" />
+                  Stop AI Workflow
+                </button>
               </div>
             </div>
           </div>
